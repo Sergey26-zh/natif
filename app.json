@@ -1,6 +1,6 @@
 {
   "expo": {
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "android": {
       "permissions": [
         "android.permission.RECORD_AUDIO",

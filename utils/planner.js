@@ -20,9 +20,18 @@ export function normalizePlannerItem(item) {
       task: item.task || 'Задача',
       dayKey: item.dayKey || createDayKey(item.date || new Date()),
       completed: Boolean(item.completed),
+      sortOrder:
+        typeof item.sortOrder === 'number'
+          ? item.sortOrder
+          : new Date(item.createdAt || Date.now()).getTime(),
       createdAt: item.createdAt || new Date().toISOString(),
     };
   }
+
+  let importance = item.importance || 'medium';
+  if (importance === 'optional') importance = 'low';
+  if (importance === 'important') importance = 'medium';
+  if (importance === 'critical') importance = 'high';
 
   return {
     id: item.id,
@@ -30,6 +39,7 @@ export function normalizePlannerItem(item) {
     task: item.task || 'Напоминание',
     date: item.date,
     notificationId: item.notificationId,
+    importance,
     createdAt: item.createdAt || item.date || new Date().toISOString(),
   };
 }
@@ -38,8 +48,7 @@ export async function loadPlannerItems() {
   const current = await AsyncStorage.getItem(STORAGE_KEY);
 
   if (current) {
-    const parsed = JSON.parse(current).map(normalizePlannerItem);
-    return parsed;
+    return JSON.parse(current).map(normalizePlannerItem);
   }
 
   const legacy = await AsyncStorage.getItem(LEGACY_REMINDERS_KEY);
@@ -48,6 +57,7 @@ export async function loadPlannerItems() {
         normalizePlannerItem({
           ...item,
           type: 'reminder',
+          importance: item.importance || 'medium',
         })
       )
     : [];
@@ -66,25 +76,29 @@ export async function savePlannerItems(items) {
   );
 }
 
-export function buildReminderItem(task, date, notificationId) {
+export function buildReminderItem(task, date, notificationId, importance = 'medium') {
   return {
     id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
     type: 'reminder',
     task,
     date: date.toISOString(),
     notificationId,
+    importance,
     createdAt: new Date().toISOString(),
   };
 }
 
 export function buildTaskItem(task, date) {
+  const createdAt = new Date().toISOString();
+
   return {
     id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
     type: 'task',
     task,
     dayKey: createDayKey(date),
     completed: false,
-    createdAt: new Date().toISOString(),
+    sortOrder: new Date(createdAt).getTime(),
+    createdAt,
   };
 }
 

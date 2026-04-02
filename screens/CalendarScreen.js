@@ -12,8 +12,15 @@ import {
   loadPlannerItems,
   savePlannerItems,
 } from '../utils/planner';
+import { useAppTheme } from '../theme';
 
 const WEEK_DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+
+const IMPORTANCE_META = {
+  low: { label: 'Низкая', color: '#A8AFCA' },
+  medium: { label: 'Средняя', color: '#6F49FF' },
+  high: { label: 'Высокая', color: '#FF5A5F' },
+};
 
 function formatMonthTitle(date) {
   return date.toLocaleDateString('ru-RU', {
@@ -32,6 +39,8 @@ function formatSelectedTitle(date) {
 
 export default function CalendarScreen() {
   const tabBarHeight = useBottomTabBarHeight();
+  const { themeMode, theme, toggleTheme, previewMode, togglePreview } = useAppTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const today = useMemo(() => new Date(), []);
   const [items, setItems] = useState([]);
   const [visibleMonth, setVisibleMonth] = useState(new Date());
@@ -65,9 +74,6 @@ export default function CalendarScreen() {
     [items, selectedDate, selectedDayKey]
   );
 
-  const reminderCount = selectedItems.filter((item) => item.type === 'reminder').length;
-  const taskCount = selectedItems.filter((item) => item.type === 'task').length;
-
   const countsByDay = useMemo(() => {
     const map = new Map();
 
@@ -96,13 +102,12 @@ export default function CalendarScreen() {
       selectedDate.getMonth() !== next.getMonth() ||
       selectedDate.getFullYear() !== next.getFullYear()
     ) {
-      const adjusted = new Date(next.getFullYear(), next.getMonth(), 1);
-      setSelectedDate(adjusted);
+      setSelectedDate(new Date(next.getFullYear(), next.getMonth(), 1));
     }
   };
 
-  const removeReminder = async (itemToDelete) => {
-    if (itemToDelete.notificationId) {
+  const removeItem = async (itemToDelete) => {
+    if (itemToDelete.type === 'reminder' && itemToDelete.notificationId) {
       try {
         await Notifications.cancelScheduledNotificationAsync(itemToDelete.notificationId);
       } catch (e) {
@@ -115,15 +120,50 @@ export default function CalendarScreen() {
     await savePlannerItems(updated);
   };
 
+  const toggleTask = async (taskId) => {
+    const updated = items.map((item) =>
+      item.id === taskId && item.type === 'task'
+        ? { ...item, completed: !item.completed }
+        : item
+    );
+
+    setItems(updated);
+    await savePlannerItems(updated);
+  };
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.container}>
-        <Text style={styles.title}>Календарь</Text>
+        <View style={styles.titleRow}>
+          <Text style={styles.title}>Календарь</Text>
+
+          <View style={styles.topActions}>
+            <TouchableOpacity
+              style={[styles.previewToggle, previewMode && styles.previewToggleActive]}
+              activeOpacity={0.85}
+              onPress={togglePreview}
+            >
+              <Ionicons
+                name="phone-portrait-outline"
+                size={17}
+                color={previewMode ? '#FFFFFF' : theme.colors.primary}
+              />
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.themeToggle} activeOpacity={0.85} onPress={toggleTheme}>
+              <Ionicons
+                name={themeMode === 'dark' ? 'sunny-outline' : 'moon-outline'}
+                size={18}
+                color={theme.colors.primary}
+              />
+            </TouchableOpacity>
+          </View>
+        </View>
 
         <View style={styles.calendarCard}>
           <View style={styles.calendarHeader}>
             <TouchableOpacity style={styles.headerIcon} onPress={() => shiftMonth(-1)}>
-              <Ionicons name="chevron-back" size={20} color="#76809F" />
+              <Ionicons name="chevron-back" size={20} color={theme.colors.textSecondary} />
             </TouchableOpacity>
 
             <Text style={styles.monthTitle}>
@@ -131,7 +171,7 @@ export default function CalendarScreen() {
             </Text>
 
             <TouchableOpacity style={styles.headerIcon} onPress={() => shiftMonth(1)}>
-              <Ionicons name="chevron-forward" size={20} color="#76809F" />
+              <Ionicons name="chevron-forward" size={20} color={theme.colors.textSecondary} />
             </TouchableOpacity>
           </View>
 
@@ -158,7 +198,7 @@ export default function CalendarScreen() {
                     isSelected && styles.dayCellSelected,
                     isToday && !isSelected && styles.dayCellToday,
                   ]}
-                  activeOpacity={0.85}
+                  activeOpacity={0.88}
                   onPress={() => setSelectedDate(date)}
                 >
                   <Text
@@ -170,6 +210,7 @@ export default function CalendarScreen() {
                   >
                     {date.getDate()}
                   </Text>
+
                   {(count.reminders > 0 || count.tasks > 0) && inCurrentMonth ? (
                     <View style={styles.dotRow}>
                       {count.reminders > 0 ? <View style={styles.reminderDot} /> : null}
@@ -186,6 +227,7 @@ export default function CalendarScreen() {
               <View style={styles.reminderDot} />
               <Text style={styles.legendText}>Напоминания</Text>
             </View>
+
             <View style={styles.legendItem}>
               <View style={styles.taskDot} />
               <Text style={styles.legendText}>Задачи</Text>
@@ -199,7 +241,7 @@ export default function CalendarScreen() {
 
         {selectedItems.length === 0 ? (
           <View style={styles.emptyCard}>
-            <Ionicons name="sunny-outline" size={20} color="#B7BCD2" />
+            <Ionicons name="sunny-outline" size={20} color={theme.colors.emptyIcon} />
             <Text style={styles.emptyText}>Ничего не запланировано</Text>
           </View>
         ) : (
@@ -208,33 +250,72 @@ export default function CalendarScreen() {
             keyExtractor={(item) => item.id}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={{ paddingBottom: tabBarHeight + 22 }}
-            renderItem={({ item }) => (
-              <View style={styles.planCard}>
-                <View style={styles.planBadge}>
-                  <View style={item.type === 'task' ? styles.taskDot : styles.reminderDot} />
-                </View>
-                <View style={styles.planTextWrap}>
-                  <Text style={styles.planTitle}>{item.task}</Text>
-                  <Text style={styles.planSubtitle}>
-                    {item.type === 'task'
-                      ? 'Задача на день'
-                      : new Date(item.date).toLocaleTimeString('ru-RU', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                  </Text>
-                </View>
-                {item.type === 'reminder' ? (
+            renderItem={({ item }) => {
+              const reminderMeta = IMPORTANCE_META[item.importance] || IMPORTANCE_META.medium;
+              const isTask = item.type === 'task';
+
+              return (
+                <View style={styles.planCard}>
+                  {isTask ? (
+                    <TouchableOpacity
+                      activeOpacity={0.85}
+                      onPress={() => toggleTask(item.id)}
+                      style={styles.taskCheckButton}
+                    >
+                      <Ionicons
+                        name={item.completed ? 'checkbox' : 'square-outline'}
+                        size={20}
+                        color={theme.colors.success}
+                      />
+                    </TouchableOpacity>
+                  ) : (
+                    <View
+                      style={[
+                        styles.planBadge,
+                        { backgroundColor: `${reminderMeta.color}18` },
+                      ]}
+                    >
+                      <Ionicons
+                        name="notifications-outline"
+                        size={18}
+                        color={reminderMeta.color}
+                      />
+                    </View>
+                  )}
+
+                  <View style={styles.planTextWrap}>
+                    <Text
+                      style={[
+                        styles.planTitle,
+                        isTask && styles.taskTitle,
+                        isTask && item.completed && styles.completedTitle,
+                      ]}
+                    >
+                      {item.task}
+                    </Text>
+
+                    <Text style={[styles.planSubtitle, isTask && styles.taskSubtitle]}>
+                      {isTask
+                        ? item.completed
+                          ? 'Задача выполнена'
+                          : 'Задача на день'
+                        : `${reminderMeta.label} · ${new Date(item.date).toLocaleTimeString('ru-RU', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}`}
+                    </Text>
+                  </View>
+
                   <TouchableOpacity
                     style={styles.deleteButton}
                     activeOpacity={0.8}
-                    onPress={() => removeReminder(item)}
+                    onPress={() => removeItem(item)}
                   >
-                    <Ionicons name="trash-outline" size={18} color="#FF6E73" />
+                    <Ionicons name="trash-outline" size={18} color={theme.colors.danger} />
                   </TouchableOpacity>
-                ) : null}
-              </View>
-            )}
+                </View>
+              );
+            }}
           />
         )}
       </View>
@@ -242,183 +323,235 @@ export default function CalendarScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: '#F5F6FF',
-  },
-  container: {
-    flex: 1,
-    paddingHorizontal: 18,
-    paddingTop: 8,
-  },
-  title: {
-    fontSize: 30,
-    lineHeight: 36,
-    fontWeight: '900',
-    color: '#151827',
-    marginBottom: 14,
-  },
-  calendarCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
-    paddingHorizontal: 16,
-    paddingTop: 14,
-    paddingBottom: 16,
-    borderWidth: 1,
-    borderColor: '#E7E9F6',
-  },
-  calendarHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 14,
-  },
-  headerIcon: {
-    width: 32,
-    height: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  monthTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#151827',
-  },
-  weekRow: {
-    flexDirection: 'row',
-    marginBottom: 10,
-  },
-  weekDay: {
-    flex: 1,
-    textAlign: 'center',
-    fontSize: 12,
-    color: '#A0A7C0',
-    fontWeight: '700',
-  },
-  grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-  },
-  dayCell: {
-    width: '14.285%',
-    height: 46,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dayCellSelected: {
-    backgroundColor: '#6F49FF',
-    borderRadius: 22,
-  },
-  dayCellToday: {
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: '#6F49FF',
-  },
-  dayCellText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#151827',
-  },
-  dayCellTextSelected: {
-    color: '#FFFFFF',
-  },
-  dayCellMuted: {
-    color: '#CAD0E3',
-  },
-  dotRow: {
-    flexDirection: 'row',
-    marginTop: 3,
-    gap: 4,
-  },
-  reminderDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#7A5CFF',
-  },
-  taskDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#43C59E',
-  },
-  legend: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    marginTop: 12,
-    gap: 18,
-  },
-  legendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-  },
-  legendText: {
-    fontSize: 12,
-    color: '#A2A9C3',
-  },
-  sectionTitle: {
-    marginTop: 18,
-    marginBottom: 12,
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#151827',
-  },
-  emptyCard: {
-    height: 52,
-    borderRadius: 16,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E7E9F6',
-    paddingHorizontal: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  emptyText: {
-    color: '#A2A9C3',
-    fontSize: 15,
-  },
-  planCard: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E7E9F6',
-    borderRadius: 18,
-    padding: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  planBadge: {
-    width: 34,
-    height: 34,
-    borderRadius: 12,
-    backgroundColor: '#F3F0FF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  planTextWrap: {
-    flex: 1,
-  },
-  planTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#151827',
-  },
-  planSubtitle: {
-    marginTop: 3,
-    fontSize: 13,
-    color: '#9DA5BF',
-  },
-  deleteButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: '#FFF4F4',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 10,
-  },
-});
+function createStyles(theme) {
+  return StyleSheet.create({
+    safe: {
+      flex: 1,
+      backgroundColor: theme.colors.background,
+    },
+    container: {
+      flex: 1,
+      paddingHorizontal: 18,
+      paddingTop: 8,
+    },
+    titleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 14,
+    },
+    topActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    title: {
+      fontSize: 30,
+      lineHeight: 36,
+      fontWeight: '900',
+      color: theme.colors.text,
+    },
+    previewToggle: {
+      width: 38,
+      height: 38,
+      borderRadius: 19,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.colors.surfaceSecondary,
+      borderWidth: 1,
+      borderColor: theme.colors.cardBorder,
+    },
+    previewToggleActive: {
+      backgroundColor: theme.colors.primary,
+      borderColor: theme.colors.primary,
+    },
+    themeToggle: {
+      width: 38,
+      height: 38,
+      borderRadius: 19,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.colors.surfaceSecondary,
+      borderWidth: 1,
+      borderColor: theme.colors.cardBorder,
+    },
+    calendarCard: {
+      backgroundColor: theme.colors.surface,
+      borderRadius: 24,
+      paddingHorizontal: 16,
+      paddingTop: 14,
+      paddingBottom: 16,
+      borderWidth: 1,
+      borderColor: theme.colors.cardBorder,
+    },
+    calendarHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 14,
+    },
+    headerIcon: {
+      width: 32,
+      height: 32,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    monthTitle: {
+      fontSize: 16,
+      fontWeight: '800',
+      color: theme.colors.text,
+    },
+    weekRow: {
+      flexDirection: 'row',
+      marginBottom: 10,
+    },
+    weekDay: {
+      flex: 1,
+      textAlign: 'center',
+      fontSize: 12,
+      color: theme.colors.textMuted,
+      fontWeight: '700',
+    },
+    grid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+    },
+    dayCell: {
+      width: '14.285%',
+      height: 46,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    dayCellSelected: {
+      backgroundColor: theme.colors.primary,
+      borderRadius: 22,
+    },
+    dayCellToday: {
+      borderRadius: 22,
+      borderWidth: 1,
+      borderColor: theme.colors.calendarTodayBorder,
+    },
+    dayCellText: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.colors.text,
+    },
+    dayCellTextSelected: {
+      color: '#FFFFFF',
+    },
+    dayCellMuted: {
+      color: theme.colors.textMuted,
+      opacity: 0.45,
+    },
+    dotRow: {
+      flexDirection: 'row',
+      marginTop: 3,
+      gap: 4,
+    },
+    reminderDot: {
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+      backgroundColor: '#7A5CFF',
+    },
+    taskDot: {
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+      backgroundColor: theme.colors.success,
+    },
+    legend: {
+      flexDirection: 'row',
+      justifyContent: 'center',
+      marginTop: 12,
+      gap: 18,
+    },
+    legendItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+    },
+    legendText: {
+      fontSize: 12,
+      color: theme.colors.textMuted,
+    },
+    sectionTitle: {
+      marginTop: 18,
+      marginBottom: 12,
+      fontSize: 18,
+      fontWeight: '800',
+      color: theme.colors.text,
+    },
+    emptyCard: {
+      height: 52,
+      borderRadius: 16,
+      backgroundColor: theme.colors.surface,
+      borderWidth: 1,
+      borderColor: theme.colors.cardBorder,
+      paddingHorizontal: 14,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    emptyText: {
+      color: theme.colors.textMuted,
+      fontSize: 15,
+    },
+    planCard: {
+      backgroundColor: theme.colors.surface,
+      borderWidth: 1,
+      borderColor: theme.colors.cardBorder,
+      borderRadius: 18,
+      padding: 14,
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: 10,
+    },
+    planBadge: {
+      width: 34,
+      height: 34,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: 12,
+    },
+    taskCheckButton: {
+      width: 28,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: 12,
+    },
+    planTextWrap: {
+      flex: 1,
+    },
+    planTitle: {
+      fontSize: 15,
+      fontWeight: '700',
+      color: theme.colors.text,
+    },
+    taskTitle: {
+      color: theme.colors.success,
+    },
+    completedTitle: {
+      color: theme.colors.textMuted,
+      textDecorationLine: 'line-through',
+    },
+    planSubtitle: {
+      marginTop: 3,
+      fontSize: 13,
+      color: theme.colors.textMuted,
+    },
+    taskSubtitle: {
+      color: theme.colors.textSoft,
+    },
+    deleteButton: {
+      width: 38,
+      height: 38,
+      borderRadius: 12,
+      backgroundColor: theme.colors.dangerSoft,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginLeft: 10,
+    },
+  });
+}

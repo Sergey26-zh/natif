@@ -29,6 +29,10 @@ export default function QuickAddScreen() {
     console.log('QuickAddScreen mounted');
     Notifications.requestPermissionsAsync();
 
+    if (!Voice || typeof Voice.start !== 'function') {
+      return undefined;
+    }
+
     Voice.onSpeechStart = (e) => {
       console.log('VOICE onSpeechStart', e);
       setIsListening(true);
@@ -91,6 +95,11 @@ export default function QuickAddScreen() {
     console.log('START button pressed');
 
     try {
+      if (!Voice || typeof Voice.start !== 'function') {
+        alert('Голосовой ввод недоступен');
+        return;
+      }
+
       const ok = await requestMicPermission();
       if (!ok) {
         alert('Нет доступа к микрофону');
@@ -117,6 +126,11 @@ export default function QuickAddScreen() {
     console.log('STOP button pressed');
 
     try {
+      if (!Voice || typeof Voice.stop !== 'function') {
+        setIsListening(false);
+        return;
+      }
+
       await Voice.stop();
       setIsListening(false);
       console.log('VOICE stop called');
