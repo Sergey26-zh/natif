@@ -8,6 +8,10 @@ import {
   Animated,
   Easing,
   Platform,
+  KeyboardAvoidingView,
+  Keyboard,
+  ScrollView,
+  InputAccessoryView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
@@ -63,14 +67,8 @@ function cleanTask(value) {
 }
 
 function isMeaningfulTask(value) {
-  if (!value) {
-    return false;
-  }
-
-  if (value.length < 3) {
-    return false;
-  }
-
+  if (!value) return false;
+  if (value.length < 3) return false;
   return !GARBAGE_TASK_RE.test(value);
 }
 
@@ -126,11 +124,7 @@ function parseDates(sourceText) {
         const mergedDate = next.start.date();
         const dayDate = current.start.date();
 
-        mergedDate.setFullYear(
-          dayDate.getFullYear(),
-          dayDate.getMonth(),
-          dayDate.getDate()
-        );
+        mergedDate.setFullYear(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate());
 
         normalizedResults.push({
           text: `${current.text} ${next.text}`,
@@ -185,10 +179,7 @@ function parseDates(sourceText) {
 
 function splitIntoReminderClauses(sourceText) {
   const normalizedText = sourceText.replace(/\s+/g, ' ').trim();
-
-  if (!normalizedText) {
-    return [];
-  }
+  if (!normalizedText) return [];
 
   const pieces = normalizedText
     .split(/\s+(?:и потом|после этого|затем|потом|и|а)\s+/gi)
@@ -219,16 +210,12 @@ function splitIntoReminderClauses(sourceText) {
   }
 
   clauses.push(currentClause.trim());
-
   return clauses.filter(Boolean);
 }
 
 function extractRemindersFromClause(sourceText) {
   const parsed = parseDates(sourceText);
-
-  if (!parsed.length) {
-    return [];
-  }
+  if (!parsed.length) return [];
 
   return parsed
     .map((result, index) => {
@@ -264,6 +251,7 @@ function extractQuickReminders(sourceText) {
 }
 
 export default function AddReminderScreen() {
+  const keyboardAccessoryId = 'reminderInputAccessory';
   const tabBarHeight = useBottomTabBarHeight();
   const isFocused = useIsFocused();
   const { theme } = useAppTheme();
@@ -283,6 +271,19 @@ export default function AddReminderScreen() {
   const pulseRing = useRef(new Animated.Value(0.25)).current;
   const toastOpacity = useRef(new Animated.Value(0)).current;
   const toastTranslateY = useRef(new Animated.Value(-12)).current;
+  const attachReminderVoiceListeners = () => {
+    addVoiceListeners({
+      onSpeechResults: (e) => {
+        if (e?.value?.length) setText(e.value[0]);
+      },
+      onSpeechPartialResults: (e) => {
+        if (e?.value?.length) setText(e.value[0]);
+      },
+      onSpeechStart: () => setIsListening(true),
+      onSpeechEnd: () => setIsListening(false),
+      onSpeechError: () => setIsListening(false),
+    });
+  };
 
   useEffect(() => {
     const now = new Date();
@@ -328,9 +329,7 @@ export default function AddReminderScreen() {
     }
 
     return () => {
-      if (hideTimer) {
-        clearTimeout(hideTimer);
-      }
+      if (hideTimer) clearTimeout(hideTimer);
     };
   }, [toastMessage, toastOpacity, toastTranslateY]);
 
@@ -379,9 +378,7 @@ export default function AddReminderScreen() {
     }
 
     return () => {
-      if (animation) {
-        animation.stop();
-      }
+      if (animation) animation.stop();
     };
   }, [isListening, pulseRing, pulseScale]);
 
@@ -393,23 +390,10 @@ export default function AddReminderScreen() {
     if (!isFocused) {
       setIsListening(false);
       removeVoiceListeners();
-      return;
+      return undefined;
     }
 
-    addVoiceListeners({
-      onSpeechResults: (e) => {
-        if (e.value?.length) {
-          setText(e.value[0]);
-        }
-      },
-      onSpeechPartialResults: (e) => {
-        if (e.value?.length) {
-          setText(e.value[0]);
-        }
-      },
-      onSpeechStart: () => setIsListening(true),
-      onSpeechEnd: () => setIsListening(false),
-    });
+    attachReminderVoiceListeners();
 
     return () => {
       removeVoiceListeners();
@@ -418,14 +402,13 @@ export default function AddReminderScreen() {
 
   const startVoice = async () => {
     try {
+      Keyboard.dismiss();
       if (!isVoiceAvailableModule()) {
         alert('Голосовой ввод недоступен');
         return;
       }
 
-      if (!isFocused) {
-        return;
-      }
+      if (!isFocused) return;
 
       const available = await isSpeechAvailable();
       if (!available) {
@@ -433,8 +416,11 @@ export default function AddReminderScreen() {
         return;
       }
 
+      attachReminderVoiceListeners();
+      setIsListening(true);
       await startSpeech('ru-RU');
     } catch (e) {
+      setIsListening(false);
       console.log(e);
     }
   };
@@ -483,14 +469,12 @@ export default function AddReminderScreen() {
       },
     });
 
-    await appendReminder(
-      buildReminderItem(normalizedTask, date, notificationId, importance)
-    );
-
+    await appendReminder(buildReminderItem(normalizedTask, date, notificationId, importance));
     return true;
   };
 
   const addQuick = async () => {
+    Keyboard.dismiss();
     const reminders = extractQuickReminders(text);
 
     if (!reminders.length) {
@@ -502,9 +486,7 @@ export default function AddReminderScreen() {
 
     for (const reminder of reminders) {
       const saved = await saveReminder(reminder.task, reminder.date);
-      if (saved) {
-        savedCount += 1;
-      }
+      if (saved) savedCount += 1;
     }
 
     if (savedCount > 0) {
@@ -514,6 +496,7 @@ export default function AddReminderScreen() {
   };
 
   const addExact = async () => {
+    Keyboard.dismiss();
     const date = new Date(selectedDate);
     date.setHours(hour);
     date.setMinutes(minute);
@@ -533,6 +516,23 @@ export default function AddReminderScreen() {
     outputRange: [0.32, 0],
   });
 
+  const handleAndroidDateChange = (_, pickedDate) => {
+    setShowDatePicker(false);
+    if (!pickedDate) return;
+
+    const nextDate = new Date(selectedDate);
+    nextDate.setFullYear(pickedDate.getFullYear(), pickedDate.getMonth(), pickedDate.getDate());
+    setSelectedDate(nextDate);
+  };
+
+  const handleAndroidTimeChange = (_, selectedTime) => {
+    setShowTimePicker(false);
+    if (!selectedTime) return;
+
+    setHour(selectedTime.getHours());
+    setMinute(selectedTime.getMinutes());
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       {toastMessage ? (
@@ -551,213 +551,263 @@ export default function AddReminderScreen() {
         </Animated.View>
       ) : null}
 
-      <View style={[styles.content, { paddingBottom: Math.max(8, tabBarHeight - 58) }]}>
-        <View>
-          <Text style={styles.title}>Новое напоминание</Text>
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? undefined : 'height'}
+        keyboardVerticalOffset={0}
+      >
+        <ScrollView
+          style={styles.flex}
+          contentContainerStyle={[styles.content, { paddingBottom: 18 }]}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+          automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.topSection}>
+            <Text style={styles.title}>Новое напоминание</Text>
 
-          <View style={styles.segment}>
-            <TouchableOpacity
-              style={[styles.segmentOption, mode === 'quick' && styles.segmentActive]}
-              onPress={() => setMode('quick')}
-              activeOpacity={0.9}
-            >
-              {mode === 'quick' ? (
-                <LinearGradient
-                  colors={[theme.colors.primary, '#8A58FF']}
-                  start={{ x: 0, y: 0.5 }}
-                  end={{ x: 1, y: 0.5 }}
-                  style={styles.segmentGradient}
-                >
-                  <Text style={[styles.segmentText, styles.segmentTextActive]}>Быстро</Text>
-                </LinearGradient>
-              ) : (
-                <Text style={styles.segmentText}>Быстро</Text>
-              )}
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.segmentOption, mode === 'exact' && styles.segmentActive]}
-              onPress={() => setMode('exact')}
-              activeOpacity={0.9}
-            >
-              {mode === 'exact' ? (
-                <LinearGradient
-                  colors={[theme.colors.primary, '#8A58FF']}
-                  start={{ x: 0, y: 0.5 }}
-                  end={{ x: 1, y: 0.5 }}
-                  style={styles.segmentGradient}
-                >
-                  <Text style={[styles.segmentText, styles.segmentTextActive]}>Точно</Text>
-                </LinearGradient>
-              ) : (
-                <Text style={styles.segmentText}>Точно</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.importanceBlock}>
-            <Text style={styles.importanceTitle}>Важность</Text>
-            <View style={styles.importanceRow}>
-              {IMPORTANCE_OPTIONS.map((option) => {
-                const selected = importance === option.key;
-
-                return (
-                  <TouchableOpacity
-                    key={option.key}
-                    style={[
-                      styles.importanceChip,
-                      selected && {
-                        borderColor: option.color,
-                        backgroundColor: `${option.color}14`,
-                      },
-                    ]}
-                    activeOpacity={0.85}
-                    onPress={() => setImportance(option.key)}
+            <View style={styles.segment}>
+              <TouchableOpacity
+                style={[styles.segmentOption, mode === 'quick' && styles.segmentActive]}
+                onPress={() => setMode('quick')}
+                activeOpacity={0.9}
+              >
+                {mode === 'quick' ? (
+                  <LinearGradient
+                    colors={[theme.colors.primary, '#8A58FF']}
+                    start={{ x: 0, y: 0.5 }}
+                    end={{ x: 1, y: 0.5 }}
+                    style={styles.segmentGradient}
                   >
-                    <Text
+                    <Text style={[styles.segmentText, styles.segmentTextActive]}>Быстро</Text>
+                  </LinearGradient>
+                ) : (
+                  <Text style={styles.segmentText}>Быстро</Text>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.segmentOption, mode === 'exact' && styles.segmentActive]}
+                onPress={() => setMode('exact')}
+                activeOpacity={0.9}
+              >
+                {mode === 'exact' ? (
+                  <LinearGradient
+                    colors={[theme.colors.primary, '#8A58FF']}
+                    start={{ x: 0, y: 0.5 }}
+                    end={{ x: 1, y: 0.5 }}
+                    style={styles.segmentGradient}
+                  >
+                    <Text style={[styles.segmentText, styles.segmentTextActive]}>Точно</Text>
+                  </LinearGradient>
+                ) : (
+                  <Text style={styles.segmentText}>Точно</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.importanceBlock}>
+              <Text style={styles.importanceTitle}>Важность</Text>
+              <View style={styles.importanceRow}>
+                {IMPORTANCE_OPTIONS.map((option) => {
+                  const selected = importance === option.key;
+
+                  return (
+                    <TouchableOpacity
+                      key={option.key}
                       style={[
-                        styles.importanceText,
-                        selected && { color: option.color },
+                        styles.importanceChip,
+                        selected && {
+                          borderColor: option.color,
+                          backgroundColor: `${option.color}14`,
+                        },
+                      ]}
+                      activeOpacity={0.85}
+                      onPress={() => setImportance(option.key)}
+                    >
+                      <Text
+                        style={[
+                          styles.importanceText,
+                          selected && { color: option.color },
+                        ]}
+                      >
+                        {option.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
+            <View style={[styles.inputCard, isListening && styles.inputCardListening]}>
+              <TextInput
+                placeholder={
+                  mode === 'exact'
+                    ? 'Что нужно сделать?'
+                    : 'Напишите или надиктуйте напоминание'
+                }
+                placeholderTextColor={theme.colors.textMuted}
+                style={[styles.input, !text && styles.inputPlaceholderState]}
+                value={text}
+                onChangeText={setText}
+                multiline
+                textAlignVertical="top"
+                inputAccessoryViewID={Platform.OS === 'ios' ? keyboardAccessoryId : undefined}
+              />
+
+              {mode === 'quick' && isListening ? (
+                <Text style={styles.recordingText}>• Запись...</Text>
+              ) : null}
+            </View>
+
+            {mode === 'quick' ? (
+              <View style={styles.voiceBlock}>
+                <View style={styles.micWrap}>
+                  {isListening ? (
+                    <Animated.View
+                      pointerEvents="none"
+                      style={[
+                        styles.micPulseRing,
+                        {
+                          opacity: ringOpacity,
+                          transform: [{ scale: pulseRing }],
+                        },
+                      ]}
+                    />
+                  ) : null}
+
+                  <TouchableOpacity onPress={isListening ? stopVoice : startVoice} activeOpacity={0.88}>
+                    <Animated.View
+                      style={[
+                        styles.micButton,
+                        isListening && styles.micButtonActive,
+                        { transform: [{ scale: pulseScale }] },
                       ]}
                     >
-                      {option.label}
+                      <Ionicons name="mic" size={30} color="#FFFFFF" />
+                    </Animated.View>
+                  </TouchableOpacity>
+                </View>
+
+                <Text style={styles.voiceHint}>
+                  {isListening
+                    ? 'Нажмите ещё раз, чтобы остановить'
+                    : 'Нажмите для голосового ввода'}
+                </Text>
+              </View>
+            ) : (
+              <>
+                <View style={styles.exactRow}>
+                  <TouchableOpacity
+                    style={styles.infoChip}
+                    activeOpacity={0.85}
+                    onPress={() => {
+                      Keyboard.dismiss();
+                      setShowDatePicker((current) => !current);
+                      setShowTimePicker(false);
+                    }}
+                  >
+                    <Ionicons name="calendar-outline" size={16} color={theme.colors.primary} />
+                    <Text style={styles.infoChipText}>{formatCurrentDate(selectedDate)}</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.infoChip}
+                    activeOpacity={0.85}
+                    onPress={() => {
+                      Keyboard.dismiss();
+                      setShowTimePicker((current) => !current);
+                      setShowDatePicker(false);
+                    }}
+                  >
+                    <Ionicons name="time-outline" size={16} color={theme.colors.primary} />
+                    <Text style={styles.infoChipText}>
+                      {String(hour).padStart(2, '0')}:{String(minute).padStart(2, '0')}
                     </Text>
                   </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
+                </View>
 
-          <View style={[styles.inputCard, isListening && styles.inputCardListening]}>
-            <TextInput
-              placeholder={
-                mode === 'exact'
-                  ? 'Что нужно сделать?'
-                  : 'Напишите или надиктуйте напоминание'
-              }
-              placeholderTextColor={theme.colors.textMuted}
-              style={styles.input}
-              value={text}
-              onChangeText={setText}
-              multiline
-              textAlignVertical="top"
-            />
-
-            {mode === 'quick' && isListening ? (
-              <Text style={styles.recordingText}>● Запись...</Text>
-            ) : null}
-          </View>
-
-          {mode === 'quick' ? (
-            <View style={styles.voiceBlock}>
-              <View style={styles.micWrap}>
-                {isListening ? (
-                  <Animated.View
-                    pointerEvents="none"
-                    style={[
-                      styles.micPulseRing,
-                      {
-                        opacity: ringOpacity,
-                        transform: [{ scale: pulseRing }],
-                      },
-                    ]}
-                  />
+                {Platform.OS === 'ios' && showDatePicker ? (
+                  <View style={styles.inlinePickerCard}>
+                    <DateTimePicker
+                      value={selectedDate}
+                      mode="date"
+                      display="inline"
+                      onChange={(_, pickedDate) => {
+                        if (!pickedDate) return;
+                        const nextDate = new Date(selectedDate);
+                        nextDate.setFullYear(
+                          pickedDate.getFullYear(),
+                          pickedDate.getMonth(),
+                          pickedDate.getDate()
+                        );
+                        setSelectedDate(nextDate);
+                      }}
+                    />
+                  </View>
                 ) : null}
 
-                <TouchableOpacity onPress={isListening ? stopVoice : startVoice} activeOpacity={0.88}>
-                  <Animated.View
-                    style={[
-                      styles.micButton,
-                      isListening && styles.micButtonActive,
-                      { transform: [{ scale: pulseScale }] },
-                    ]}
-                  >
-                    <Ionicons name="mic" size={24} color="#FFFFFF" />
-                  </Animated.View>
-                </TouchableOpacity>
-              </View>
+                {Platform.OS === 'ios' && showTimePicker ? (
+                  <View style={styles.inlinePickerCard}>
+                    <DateTimePicker
+                      value={new Date(2026, 0, 1, hour, minute)}
+                      mode="time"
+                      display="spinner"
+                      is24Hour
+                      onChange={(_, selectedTime) => {
+                        if (!selectedTime) return;
+                        setHour(selectedTime.getHours());
+                        setMinute(selectedTime.getMinutes());
+                      }}
+                    />
+                  </View>
+                ) : null}
+              </>
+            )}
+          </View>
 
-              <Text style={styles.voiceHint}>
-                {isListening
-                  ? 'Нажмите ещё раз, чтобы остановить'
-                  : 'Нажмите для голосового ввода'}
-              </Text>
-            </View>
-          ) : (
-            <View style={styles.exactRow}>
-              <TouchableOpacity
-                style={styles.infoChip}
-                activeOpacity={0.85}
-                onPress={() => setShowDatePicker(true)}
-              >
-                <Ionicons name="calendar-outline" size={16} color={theme.colors.primary} />
-                <Text style={styles.infoChipText}>{formatCurrentDate(selectedDate)}</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.infoChip}
-                activeOpacity={0.85}
-                onPress={() => setShowTimePicker(true)}
-              >
-                <Ionicons name="time-outline" size={16} color={theme.colors.primary} />
-                <Text style={styles.infoChipText}>
-                  {String(hour).padStart(2, '0')}:{String(minute).padStart(2, '0')}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          )}
-        </View>
-
-        <TouchableOpacity onPress={mode === 'quick' ? addQuick : addExact} activeOpacity={0.88}>
-          <LinearGradient
-            colors={[theme.colors.primaryStrong, theme.colors.primaryAlt]}
-            start={{ x: 0, y: 0.5 }}
-            end={{ x: 1, y: 0.5 }}
-            style={styles.button}
+          <TouchableOpacity
+            onPress={mode === 'quick' ? addQuick : addExact}
+            activeOpacity={0.88}
+            style={[styles.buttonWrap, { marginBottom: Math.max(8, tabBarHeight - 46) }]}
           >
-            <Ionicons name="checkmark" size={20} color="#FFFFFF" />
-            <Text style={styles.buttonText}>Добавить напоминание</Text>
-          </LinearGradient>
-        </TouchableOpacity>
-      </View>
+            <LinearGradient
+              colors={[theme.colors.primaryStrong, theme.colors.primaryAlt]}
+              start={{ x: 0, y: 0.5 }}
+              end={{ x: 1, y: 0.5 }}
+              style={styles.button}
+            >
+              <Text style={styles.buttonText}>Добавить напоминание</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        </ScrollView>
+      </KeyboardAvoidingView>
 
-      {showDatePicker ? (
+      {Platform.OS === 'ios' ? (
+        <InputAccessoryView nativeID={keyboardAccessoryId}>
+          <View style={styles.keyboardAccessory}>
+            <TouchableOpacity activeOpacity={0.8} onPress={Keyboard.dismiss}>
+              <Text style={styles.keyboardAccessoryText}>Скрыть</Text>
+            </TouchableOpacity>
+          </View>
+        </InputAccessoryView>
+      ) : null}
+
+      {Platform.OS === 'android' && showDatePicker ? (
         <DateTimePicker
           value={selectedDate}
           mode="date"
-          onChange={(_, pickedDate) => {
-            setShowDatePicker(false);
-
-            if (!pickedDate) {
-              return;
-            }
-
-            const nextDate = new Date(selectedDate);
-            nextDate.setFullYear(
-              pickedDate.getFullYear(),
-              pickedDate.getMonth(),
-              pickedDate.getDate()
-            );
-            setSelectedDate(nextDate);
-          }}
+          onChange={handleAndroidDateChange}
         />
       ) : null}
 
-      {showTimePicker ? (
+      {Platform.OS === 'android' && showTimePicker ? (
         <DateTimePicker
           value={new Date(2026, 0, 1, hour, minute)}
           mode="time"
           is24Hour
-          onChange={(_, selectedTime) => {
-            setShowTimePicker(false);
-
-            if (!selectedTime) {
-              return;
-            }
-
-            setHour(selectedTime.getHours());
-            setMinute(selectedTime.getMinutes());
-          }}
+          onChange={handleAndroidTimeChange}
         />
       ) : null}
     </SafeAreaView>
@@ -772,9 +822,14 @@ function createStyles(theme) {
       paddingHorizontal: 20,
       paddingTop: 10,
     },
-    content: {
+    flex: {
       flex: 1,
-      justifyContent: 'space-between',
+    },
+    content: {
+      flexGrow: 1,
+    },
+    topSection: {
+      paddingBottom: 10,
     },
     toast: {
       position: 'absolute',
@@ -883,9 +938,13 @@ function createStyles(theme) {
     },
     input: {
       minHeight: Platform.OS === 'android' ? 56 : 62,
-      fontSize: 16,
-      lineHeight: 22,
+      fontSize: 18,
+      lineHeight: 24,
       color: theme.colors.text,
+    },
+    inputPlaceholderState: {
+      fontSize: 15,
+      lineHeight: 22,
     },
     recordingText: {
       marginTop: 6,
@@ -895,25 +954,26 @@ function createStyles(theme) {
     },
     voiceBlock: {
       alignItems: 'center',
-      marginTop: 10,
+      marginTop: 20,
+      marginBottom: 8,
     },
     micWrap: {
-      width: 92,
-      height: 92,
+      width: 116,
+      height: 116,
       alignItems: 'center',
       justifyContent: 'center',
     },
     micPulseRing: {
       position: 'absolute',
-      width: 92,
-      height: 92,
-      borderRadius: 46,
+      width: 116,
+      height: 116,
+      borderRadius: 58,
       backgroundColor: '#FF8A92',
     },
     micButton: {
-      width: 64,
-      height: 64,
-      borderRadius: 32,
+      width: 82,
+      height: 82,
+      borderRadius: 41,
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: '#7B51FF',
@@ -928,8 +988,9 @@ function createStyles(theme) {
       shadowColor: '#FF5A5F',
     },
     voiceHint: {
-      marginTop: 4,
-      fontSize: 13,
+      marginTop: 6,
+      fontSize: 16,
+      lineHeight: 22,
       color: theme.colors.textMuted,
       textAlign: 'center',
     },
@@ -956,6 +1017,17 @@ function createStyles(theme) {
       fontWeight: '700',
       color: theme.colors.text,
     },
+    inlinePickerCard: {
+      marginTop: 8,
+      borderRadius: 18,
+      overflow: 'hidden',
+      backgroundColor: theme.colors.surface,
+      borderWidth: 1,
+      borderColor: theme.colors.cardBorder,
+    },
+    buttonWrap: {
+      marginTop: 18,
+    },
     button: {
       height: 54,
       borderRadius: 18,
@@ -964,10 +1036,29 @@ function createStyles(theme) {
       justifyContent: 'center',
       gap: 8,
     },
+    buttonCheck: {
+      color: '#FFFFFF',
+      fontSize: 20,
+      lineHeight: 20,
+      fontWeight: '900',
+    },
     buttonText: {
       color: '#FFFFFF',
       fontSize: 18,
       fontWeight: '800',
+    },
+    keyboardAccessory: {
+      paddingHorizontal: 18,
+      paddingVertical: 10,
+      alignItems: 'flex-end',
+      backgroundColor: theme.colors.surface,
+      borderTopWidth: 1,
+      borderTopColor: theme.colors.cardBorder,
+    },
+    keyboardAccessoryText: {
+      fontSize: 16,
+      fontWeight: '700',
+      color: theme.colors.primary,
     },
   });
 }

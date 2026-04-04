@@ -65,8 +65,6 @@ export const AppThemeContext = createContext({
   themeMode: 'light',
   theme: appThemes.light,
   toggleTheme: () => {},
-  previewMode: false,
-  togglePreview: () => {},
 });
 
 export function useAppTheme() {

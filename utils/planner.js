@@ -20,6 +20,8 @@ export function normalizePlannerItem(item) {
       task: item.task || 'Задача',
       dayKey: item.dayKey || createDayKey(item.date || new Date()),
       completed: Boolean(item.completed),
+      completedAt: item.completedAt || null,
+      archivedCompleted: Boolean(item.archivedCompleted),
       sortOrder:
         typeof item.sortOrder === 'number'
           ? item.sortOrder
@@ -97,6 +99,8 @@ export function buildTaskItem(task, date) {
     task,
     dayKey: createDayKey(date),
     completed: false,
+    completedAt: null,
+    archivedCompleted: false,
     sortOrder: new Date(createdAt).getTime(),
     createdAt,
   };

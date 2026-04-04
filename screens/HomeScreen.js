@@ -7,12 +7,12 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
+  FlatList,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
-import DraggableFlatList, { ScaleDecorator } from 'react-native-draggable-flatlist';
 import {
   buildTaskItem,
   createDayKey,
@@ -30,7 +30,14 @@ import {
   stopSpeech,
 } from '../utils/voice';
 
-const REMOVE_DELAY_MS = 5000;
+const HIDE_DELAY_MS = 4000;
+const dragListModule = (() => {
+  try {
+    return require('react-native-draggable-flatlist');
+  } catch (error) {
+    return null;
+  }
+})();
 
 function formatLongTitle(date) {
   return date.toLocaleDateString('ru-RU', {
@@ -48,6 +55,15 @@ function formatShortDate(date) {
   });
 }
 
+function formatHistoryDate(dayKey) {
+  const date = new Date(`${dayKey}T12:00:00`);
+  return date.toLocaleDateString('ru-RU', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
 export default function HomeScreen() {
   const tabBarHeight = useBottomTabBarHeight();
   const isFocused = useIsFocused();
@@ -58,16 +74,10 @@ export default function HomeScreen() {
   const [items, setItems] = useState([]);
   const [taskText, setTaskText] = useState('');
   const [isListening, setIsListening] = useState(false);
-  const [pendingRemovalMap, setPendingRemovalMap] = useState({});
-  const [countdownTick, setCountdownTick] = useState(Date.now());
+  const [viewMode, setViewMode] = useState('active');
   const pendingTimeoutsRef = useRef({});
 
   const selectedDayKey = createDayKey(selectedDate);
-
-  const load = async () => {
-    const list = await loadPlannerItems();
-    setItems(list);
-  };
 
   useEffect(() => {
     load();
@@ -92,17 +102,18 @@ export default function HomeScreen() {
 
     addVoiceListeners({
       onSpeechResults: (e) => {
-        if (e.value?.length) {
+        if (e?.value?.length) {
           setTaskText(e.value[0]);
         }
       },
       onSpeechPartialResults: (e) => {
-        if (e.value?.length) {
+        if (e?.value?.length) {
           setTaskText(e.value[0]);
         }
       },
       onSpeechStart: () => setIsListening(true),
       onSpeechEnd: () => setIsListening(false),
+      onSpeechError: () => setIsListening(false),
     });
 
     return () => {
@@ -116,36 +127,58 @@ export default function HomeScreen() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!Object.keys(pendingRemovalMap).length) {
-      return undefined;
-    }
-
-    const intervalId = setInterval(() => {
-      setCountdownTick(Date.now());
-    }, 100);
-
-    return () => clearInterval(intervalId);
-  }, [pendingRemovalMap]);
-
-  const tasks = useMemo(
+  const activeTasks = useMemo(
     () =>
       items
-        .filter((item) => item.type === 'task' && item.dayKey === selectedDayKey)
+        .filter(
+          (item) =>
+            item.type === 'task' &&
+            item.dayKey === selectedDayKey &&
+            !item.archivedCompleted
+        )
         .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)),
     [items, selectedDayKey]
   );
 
-  const completedCount = tasks.filter((item) => item.completed).length;
-  const progress = tasks.length ? completedCount / tasks.length : 0;
+  const historyTasks = useMemo(
+    () =>
+      items
+        .filter((item) => item.type === 'task' && item.completed && item.archivedCompleted)
+        .sort(
+          (a, b) => new Date(b.completedAt || b.createdAt) - new Date(a.completedAt || a.createdAt)
+        ),
+    [items]
+  );
 
-  const shiftDay = (delta) => {
+  const currentList = viewMode === 'history' ? historyTasks : activeTasks;
+  const showGoToday = viewMode === 'active' && !isSameDay(selectedDate, today);
+  const completedCount = activeTasks.filter((item) => item.completed).length;
+  const progress = activeTasks.length ? completedCount / activeTasks.length : 0;
+  const useDragList = Boolean(
+    dragListModule &&
+      viewMode === 'active' &&
+      activeTasks.length > 1 &&
+      Platform.OS !== 'android'
+  );
+  const ActiveListComponent = useDragList ? dragListModule.default : FlatList;
+
+  async function load() {
+    const list = await loadPlannerItems();
+    setItems(Array.isArray(list) ? list : []);
+  }
+
+  async function persistItems(nextItems) {
+    setItems(nextItems);
+    await savePlannerItems(nextItems);
+  }
+
+  function shiftDay(delta) {
     const next = new Date(selectedDate);
     next.setDate(selectedDate.getDate() + delta);
     setSelectedDate(next);
-  };
+  }
 
-  const addTask = async () => {
+  async function addTask() {
     const normalized = taskText.trim();
     if (!normalized) {
       return;
@@ -153,101 +186,98 @@ export default function HomeScreen() {
 
     const nextTask = buildTaskItem(normalized, selectedDate);
     const updated = [nextTask, ...items];
-
     setItems(updated);
     setTaskText('');
     await savePlannerItems(updated);
-  };
+  }
 
-  const clearPendingRemoval = (id) => {
+  function clearPendingTimeout(id) {
     if (pendingTimeoutsRef.current[id]) {
       clearTimeout(pendingTimeoutsRef.current[id]);
       delete pendingTimeoutsRef.current[id];
     }
+  }
 
-    setPendingRemovalMap((current) => {
-      if (!current[id]) {
-        return current;
-      }
+  function archiveTaskAfterDelay(taskId) {
+    clearPendingTimeout(taskId);
+    pendingTimeoutsRef.current[taskId] = setTimeout(() => {
+      setItems((currentItems) => {
+        const updated = currentItems.map((item) =>
+          item.id === taskId && item.type === 'task'
+            ? { ...item, archivedCompleted: true }
+            : item
+        );
+        savePlannerItems(updated);
+        return updated;
+      });
+      delete pendingTimeoutsRef.current[taskId];
+    }, HIDE_DELAY_MS);
+  }
 
-      const next = { ...current };
-      delete next[id];
-      return next;
-    });
-  };
-
-  const finalizeTaskRemoval = async (id) => {
-    clearPendingRemoval(id);
-
-    const updated = items.filter((item) => item.id !== id);
-    setItems(updated);
-    await savePlannerItems(updated);
-  };
-
-  const scheduleTaskRemoval = (id) => {
-    clearPendingRemoval(id);
-
-    const startedAt = Date.now();
-    setPendingRemovalMap((current) => ({
-      ...current,
-      [id]: startedAt,
-    }));
-
-    pendingTimeoutsRef.current[id] = setTimeout(() => {
-      finalizeTaskRemoval(id);
-    }, REMOVE_DELAY_MS);
-  };
-
-  const toggleTask = async (id) => {
+  async function toggleTask(id) {
     const currentTask = items.find((item) => item.id === id && item.type === 'task');
     if (!currentTask) {
       return;
     }
 
-    const nextCompleted = !currentTask.completed;
+    const shouldComplete = !currentTask.completed;
+    const completedAt = shouldComplete ? new Date().toISOString() : null;
     const updated = items.map((item) =>
-      item.id === id && item.type === 'task' ? { ...item, completed: nextCompleted } : item
+      item.id === id && item.type === 'task'
+        ? {
+            ...item,
+            completed: shouldComplete,
+            completedAt,
+            archivedCompleted: false,
+          }
+        : item
     );
 
-    setItems(updated);
-    await savePlannerItems(updated);
+    await persistItems(updated);
 
-    if (nextCompleted) {
-      scheduleTaskRemoval(id);
+    if (shouldComplete) {
+      archiveTaskAfterDelay(id);
     } else {
-      clearPendingRemoval(id);
+      clearPendingTimeout(id);
     }
-  };
+  }
 
-  const removeTask = async (id) => {
-    clearPendingRemoval(id);
+  async function restoreTask(id) {
+    clearPendingTimeout(id);
+    const updated = items.map((item) =>
+      item.id === id && item.type === 'task'
+        ? {
+            ...item,
+            completed: false,
+            completedAt: null,
+            archivedCompleted: false,
+          }
+        : item
+    );
+    await persistItems(updated);
+  }
+
+  async function removeTask(id) {
+    clearPendingTimeout(id);
     const updated = items.filter((item) => item.id !== id);
-    setItems(updated);
-    await savePlannerItems(updated);
-  };
+    await persistItems(updated);
+  }
 
-  const reorderTasks = async (orderedTasks) => {
+  async function reorderTasks(orderedTasks) {
     const reorderedTasks = orderedTasks.map((task, index) => ({
       ...task,
       sortOrder: index,
     }));
-
     const otherItems = items.filter(
-      (item) => !(item.type === 'task' && item.dayKey === selectedDayKey)
+      (item) =>
+        !(item.type === 'task' && item.dayKey === selectedDayKey && !item.archivedCompleted)
     );
-    const updated = [...reorderedTasks, ...otherItems];
+    await persistItems([...reorderedTasks, ...otherItems]);
+  }
 
-    setItems(updated);
-    await savePlannerItems(updated);
-  };
-
-  const startVoice = async () => {
+  async function startVoiceCapture() {
     try {
-      if (!isVoiceAvailableModule()) {
-        return;
-      }
-
-      if (!isFocused) {
+      if (!isVoiceAvailableModule() || !isFocused) {
         return;
       }
 
@@ -256,13 +286,15 @@ export default function HomeScreen() {
         return;
       }
 
+      setIsListening(true);
       await startSpeech('ru-RU');
-    } catch (e) {
-      console.log(e);
+    } catch (error) {
+      setIsListening(false);
+      console.log(error);
     }
-  };
+  }
 
-  const stopVoice = async () => {
+  async function stopVoiceCapture() {
     if (!isVoiceAvailableModule()) {
       setIsListening(false);
       return;
@@ -270,7 +302,101 @@ export default function HomeScreen() {
 
     await stopSpeech();
     setIsListening(false);
-  };
+  }
+
+  function renderActiveTask({ item, drag, isActive }) {
+    return (
+      <View style={[styles.taskCard, isActive && styles.taskCardActive]}>
+        <View style={styles.taskTopRow}>
+          <TouchableOpacity
+            style={styles.taskMain}
+            activeOpacity={0.85}
+            onPress={() => toggleTask(item.id)}
+          >
+            <View style={styles.checkWrap}>
+              <Ionicons
+                name={item.completed ? 'checkbox' : 'square-outline'}
+                size={24}
+                color={theme.colors.successStrong}
+              />
+            </View>
+            <Text style={[styles.taskTitle, item.completed && styles.taskTitleDone]}>{item.task}</Text>
+          </TouchableOpacity>
+
+          <View style={styles.taskActions}>
+            {useDragList ? (
+              <TouchableOpacity
+                style={styles.dragHandleButton}
+                activeOpacity={0.7}
+                delayLongPress={180}
+                onLongPress={drag || undefined}
+                disabled={!drag}
+              >
+                <Ionicons name="reorder-three-outline" size={20} color={theme.colors.textMuted} />
+              </TouchableOpacity>
+            ) : null}
+
+            <TouchableOpacity
+              style={styles.deleteButton}
+              activeOpacity={0.8}
+              onPress={() => removeTask(item.id)}
+            >
+              <Ionicons name="trash-outline" size={16} color={theme.colors.textMuted} />
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    );
+  }
+
+  function renderHistoryTask({ item }) {
+    return (
+      <View style={styles.taskCard}>
+        <TouchableOpacity
+          style={styles.taskMain}
+          activeOpacity={0.85}
+          onPress={() => restoreTask(item.id)}
+        >
+          <View style={styles.checkWrap}>
+            <Ionicons name="checkbox" size={24} color={theme.colors.successStrong} />
+          </View>
+
+          <View style={styles.historyTextWrap}>
+            <Text style={[styles.taskTitle, styles.taskTitleDone]}>{item.task}</Text>
+            <Text style={styles.historySubtitle}>{formatHistoryDate(item.dayKey)}</Text>
+          </View>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.deleteButton}
+          activeOpacity={0.8}
+          onPress={() => removeTask(item.id)}
+        >
+          <Ionicons name="trash-outline" size={16} color={theme.colors.textMuted} />
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  function renderEmpty() {
+    return (
+      <View style={styles.emptyState}>
+        <View style={styles.emptyIconWrap}>
+          <Ionicons
+            name={viewMode === 'history' ? 'time-outline' : 'checkbox-outline'}
+            size={34}
+            color={theme.colors.successStrong}
+          />
+        </View>
+        <Text style={styles.emptyTitle}>{viewMode === 'history' ? 'История пуста' : 'Нет задач'}</Text>
+        <Text style={styles.emptyText}>
+          {viewMode === 'history'
+            ? 'Здесь будут выполненные задачи'
+            : 'Добавьте задачи на этот день'}
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -279,182 +405,126 @@ export default function HomeScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 24 : 12}
       >
-        <View style={[styles.container, { paddingBottom: Math.max(18, tabBarHeight - 28) }]}>
-          <View style={styles.flex}>
-            <View style={styles.headerRow}>
-              <View style={styles.titleWrap}>
-                <Text style={styles.title}>
-                  {isSameDay(selectedDate, today)
+        <View style={[styles.container, { paddingBottom: Math.max(8, tabBarHeight - 46) }]}>
+          <View style={styles.headerRow}>
+            <View style={styles.titleWrap}>
+              <Text style={styles.title}>
+                {viewMode === 'history'
+                  ? 'История'
+                  : isSameDay(selectedDate, today)
                     ? 'Сегодня'
                     : formatLongTitle(selectedDate).replace(/^\p{L}/u, (s) => s.toUpperCase())}
-                </Text>
-                <Text style={styles.subtitle}>{formatShortDate(selectedDate)}</Text>
-              </View>
-
-              <View style={styles.navPill}>
-                <TouchableOpacity style={styles.navPillButton} onPress={() => shiftDay(-1)}>
-                  <Ionicons name="chevron-back" size={22} color={theme.colors.textSecondary} />
-                </TouchableOpacity>
-
-                <View style={styles.navDivider} />
-
-                <TouchableOpacity style={styles.navPillButton} onPress={() => shiftDay(1)}>
-                  <Ionicons name="chevron-forward" size={22} color={theme.colors.textSecondary} />
-                </TouchableOpacity>
-              </View>
+              </Text>
+              <Text style={styles.subtitle}>
+                {viewMode === 'history' ? 'Выполненные задачи' : formatShortDate(selectedDate)}
+              </Text>
             </View>
 
-            {!isSameDay(selectedDate, today) ? (
-              <View style={styles.todayPill}>
-                <TouchableOpacity activeOpacity={0.85} onPress={() => setSelectedDate(new Date())}>
-                  <Text style={styles.todayPillText}>Сегодня</Text>
-                </TouchableOpacity>
-              </View>
-            ) : null}
-
-            {tasks.length > 0 ? (
-              <View style={styles.progressRow}>
-                <View style={styles.progressTrack}>
-                  <View
-                    style={[
-                      styles.progressFill,
-                      { width: `${Math.max(progress * 100, 8)}%` },
-                    ]}
+            <View style={styles.headerSide}>
+              <View style={styles.headerActions}>
+                <TouchableOpacity
+                  style={[styles.historyButton, viewMode === 'history' && styles.historyButtonActive]}
+                  activeOpacity={0.85}
+                  onPress={() => setViewMode((current) => (current === 'history' ? 'active' : 'history'))}
+                >
+                  <Ionicons
+                    name={viewMode === 'history' ? 'arrow-undo-outline' : 'time-outline'}
+                    size={18}
+                    color={viewMode === 'history' ? '#FFFFFF' : theme.colors.textSecondary}
                   />
-                </View>
-                <Text style={styles.progressText}>
-                  {completedCount}/{tasks.length} выполнено
-                </Text>
-              </View>
-            ) : null}
+                </TouchableOpacity>
 
-            {tasks.length === 0 ? (
-              <View style={styles.emptyState}>
-                <View style={styles.emptyIconWrap}>
-                  <Ionicons name="checkbox-outline" size={34} color={theme.colors.successStrong} />
-                </View>
-                <Text style={styles.emptyTitle}>Нет задач</Text>
-                <Text style={styles.emptyText}>Добавьте задачи на этот день</Text>
+                {viewMode === 'active' ? (
+                  <View style={styles.navPill}>
+                    <TouchableOpacity style={styles.navPillButton} onPress={() => shiftDay(-1)}>
+                      <Ionicons name="chevron-back" size={22} color={theme.colors.textSecondary} />
+                    </TouchableOpacity>
+                    <View style={styles.navDivider} />
+                    <TouchableOpacity style={styles.navPillButton} onPress={() => shiftDay(1)}>
+                      <Ionicons name="chevron-forward" size={22} color={theme.colors.textSecondary} />
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
               </View>
-            ) : (
-              <DraggableFlatList
-                data={tasks}
+
+              <View style={styles.todaySlot}>
+                {showGoToday ? (
+                  <View style={styles.todayPill}>
+                    <TouchableOpacity activeOpacity={0.85} onPress={() => setSelectedDate(new Date())}>
+                      <Text style={styles.todayPillText}>Сегодня</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
+              </View>
+            </View>
+          </View>
+
+          {viewMode === 'active' && activeTasks.length > 0 ? (
+            <View style={styles.progressRow}>
+              <View style={styles.progressTrack}>
+                <View style={[styles.progressFill, { width: `${Math.max(progress * 100, 8)}%` }]} />
+              </View>
+              <Text style={styles.progressText}>
+                {completedCount}/{activeTasks.length} выполнено
+              </Text>
+            </View>
+          ) : null}
+
+          <View style={styles.listArea}>
+            {currentList.length === 0 ? (
+              renderEmpty()
+            ) : viewMode === 'active' ? (
+              <ActiveListComponent
+                data={currentList}
                 keyExtractor={(item) => item.id}
-                onDragEnd={({ data }) => reorderTasks(data)}
+                style={styles.listViewport}
+                onDragEnd={useDragList ? ({ data }) => reorderTasks(data) : undefined}
                 showsVerticalScrollIndicator={false}
                 keyboardShouldPersistTaps="handled"
-                contentContainerStyle={[
-                  styles.taskList,
-                  { paddingBottom: tabBarHeight + 96 },
-                ]}
-                activationDistance={12}
-                renderItem={({ item, drag, isActive }) => {
-                  const startedAt = pendingRemovalMap[item.id];
-                  const remainingProgress = startedAt
-                    ? Math.max(0, 1 - (countdownTick - startedAt) / REMOVE_DELAY_MS)
-                    : 0;
-
-                  return (
-                    <ScaleDecorator>
-                      <View style={[styles.taskCard, isActive && styles.taskCardActive]}>
-                        <View style={styles.taskTopRow}>
-                          <TouchableOpacity
-                            style={styles.taskMain}
-                            activeOpacity={0.85}
-                            onPress={() => toggleTask(item.id)}
-                          >
-                            <View style={styles.checkWrap}>
-                              <Ionicons
-                                name={item.completed ? 'checkbox' : 'square-outline'}
-                                size={24}
-                                color={theme.colors.successStrong}
-                              />
-                            </View>
-
-                            <Text style={[styles.taskTitle, item.completed && styles.taskTitleDone]}>
-                              {item.task}
-                            </Text>
-                          </TouchableOpacity>
-
-                          <View style={styles.taskActions}>
-                            <TouchableOpacity
-                              style={styles.dragHandleButton}
-                              activeOpacity={0.7}
-                              delayLongPress={180}
-                              onLongPress={drag}
-                            >
-                              <Ionicons
-                                name="reorder-three-outline"
-                                size={20}
-                                color={theme.colors.textMuted}
-                              />
-                            </TouchableOpacity>
-
-                            <TouchableOpacity
-                              style={styles.deleteButton}
-                              activeOpacity={0.8}
-                              onPress={() => removeTask(item.id)}
-                            >
-                              <Ionicons
-                                name="close"
-                                size={18}
-                                color={theme.colors.textSecondary}
-                              />
-                            </TouchableOpacity>
-                          </View>
-                        </View>
-
-                        {startedAt ? (
-                          <View style={styles.pendingRemovalWrap}>
-                            <View style={styles.pendingRemovalTrack}>
-                              <View
-                                style={[
-                                  styles.pendingRemovalFill,
-                                  { width: `${remainingProgress * 100}%` },
-                                ]}
-                              />
-                            </View>
-
-                            <TouchableOpacity
-                              style={styles.undoButton}
-                              activeOpacity={0.85}
-                              onPress={() => toggleTask(item.id)}
-                            >
-                              <Text style={styles.undoText}>Отменить</Text>
-                            </TouchableOpacity>
-                          </View>
-                        ) : null}
-                      </View>
-                    </ScaleDecorator>
-                  );
-                }}
+                contentContainerStyle={[styles.taskList, { paddingBottom: 110 }]}
+                activationDistance={useDragList ? 12 : undefined}
+                extraData={{ items, viewMode }}
+                renderItem={renderActiveTask}
+              />
+            ) : (
+              <FlatList
+                data={currentList}
+                keyExtractor={(item) => item.id}
+                style={styles.listViewport}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={[styles.taskList, { paddingBottom: 18 }]}
+                extraData={{ items, viewMode }}
+                renderItem={renderHistoryTask}
               />
             )}
           </View>
 
-          <View style={styles.bottomComposer}>
-            <TextInput
-              value={taskText}
-              onChangeText={setTaskText}
-              placeholder="Добавить задачу..."
-              placeholderTextColor={theme.colors.textMuted}
-              style={styles.input}
-              returnKeyType="done"
-              onSubmitEditing={addTask}
-            />
+          {viewMode === 'active' ? (
+            <View style={styles.bottomComposer}>
+              <TextInput
+                value={taskText}
+                onChangeText={setTaskText}
+                placeholder="Добавить задачу..."
+                placeholderTextColor={theme.colors.textMuted}
+                style={styles.input}
+                returnKeyType="done"
+                onSubmitEditing={addTask}
+              />
 
-            <TouchableOpacity style={styles.addButton} activeOpacity={0.85} onPress={addTask}>
-              <Ionicons name="add" size={18} color={theme.colors.primary} />
-            </TouchableOpacity>
+              <TouchableOpacity style={styles.addButton} activeOpacity={0.85} onPress={addTask}>
+                <Ionicons name="add" size={18} color={theme.colors.primary} />
+              </TouchableOpacity>
 
-            <TouchableOpacity
-              style={[styles.micButton, isListening && styles.micButtonActive]}
-              activeOpacity={0.85}
-              onPress={isListening ? stopVoice : startVoice}
-            >
-              <Ionicons name="mic" size={18} color="#FFFFFF" />
-            </TouchableOpacity>
-          </View>
+              <TouchableOpacity
+                style={[styles.micButton, isListening && styles.micButtonActive]}
+                activeOpacity={0.85}
+                onPress={isListening ? stopVoiceCapture : startVoiceCapture}
+              >
+                <Ionicons name="mic" size={18} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+          ) : null}
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -474,19 +544,21 @@ function createStyles(theme) {
       flex: 1,
       paddingHorizontal: 18,
       paddingTop: 8,
-      justifyContent: 'space-between',
     },
     headerRow: {
       flexDirection: 'row',
       alignItems: 'flex-start',
       justifyContent: 'space-between',
-      gap: 16,
+      gap: 14,
+      minHeight: 92,
     },
     titleWrap: {
       flex: 1,
+      minHeight: 66,
     },
     title: {
       fontSize: 19,
+      lineHeight: 24,
       fontWeight: '900',
       color: theme.colors.text,
     },
@@ -494,6 +566,30 @@ function createStyles(theme) {
       marginTop: 4,
       fontSize: 14,
       color: theme.colors.textMuted,
+    },
+    headerSide: {
+      alignItems: 'flex-end',
+      minHeight: 84,
+    },
+    headerActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    historyButton: {
+      marginTop: 4,
+      width: 42,
+      height: 42,
+      borderRadius: 15,
+      backgroundColor: theme.colors.surface,
+      borderWidth: 1,
+      borderColor: theme.colors.cardBorder,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    historyButtonActive: {
+      backgroundColor: theme.colors.primary,
+      borderColor: theme.colors.primary,
     },
     navPill: {
       marginTop: 4,
@@ -518,25 +614,30 @@ function createStyles(theme) {
       height: 16,
       backgroundColor: theme.colors.cardBorder,
     },
-    todayPill: {
-      alignSelf: 'center',
+    todaySlot: {
       marginTop: 10,
-      paddingHorizontal: 14,
-      height: 28,
-      borderRadius: 14,
+      width: 92,
+      height: 24,
+      alignItems: 'flex-end',
+      justifyContent: 'flex-start',
+    },
+    todayPill: {
+      width: 92,
+      height: 22,
+      borderRadius: 12,
       backgroundColor: theme.colors.overlay,
       alignItems: 'center',
       justifyContent: 'center',
     },
     todayPillText: {
       color: theme.colors.primary,
-      fontSize: 13,
+      fontSize: 12,
       fontWeight: '700',
     },
     progressRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      marginTop: 14,
+      marginTop: 2,
       marginBottom: 10,
     },
     progressTrack: {
@@ -557,10 +658,21 @@ function createStyles(theme) {
       color: theme.colors.textMuted,
       fontWeight: '600',
     },
+    listArea: {
+      flex: 1,
+      minHeight: 0,
+    },
+    listViewport: {
+      flex: 1,
+    },
+    taskList: {
+      paddingTop: 4,
+    },
     emptyState: {
+      flex: 1,
       alignItems: 'center',
       justifyContent: 'center',
-      paddingTop: 82,
+      paddingBottom: 20,
     },
     emptyIconWrap: {
       width: 64,
@@ -581,10 +693,6 @@ function createStyles(theme) {
       fontSize: 15,
       color: theme.colors.textSoft,
     },
-    taskList: {
-      paddingTop: 16,
-      paddingBottom: 12,
-    },
     taskCard: {
       backgroundColor: theme.colors.surface,
       borderWidth: 1,
@@ -596,6 +704,8 @@ function createStyles(theme) {
       paddingBottom: 12,
       minHeight: 62,
       marginBottom: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
     },
     taskCardActive: {
       borderColor: theme.colors.primary,
@@ -608,6 +718,7 @@ function createStyles(theme) {
     taskTopRow: {
       flexDirection: 'row',
       alignItems: 'center',
+      flex: 1,
     },
     taskMain: {
       flex: 1,
@@ -617,6 +728,14 @@ function createStyles(theme) {
     },
     checkWrap: {
       marginRight: 10,
+    },
+    historyTextWrap: {
+      flex: 1,
+    },
+    historySubtitle: {
+      marginTop: 4,
+      fontSize: 13,
+      color: theme.colors.textMuted,
     },
     taskTitle: {
       flex: 1,
@@ -642,47 +761,16 @@ function createStyles(theme) {
       borderRadius: 10,
     },
     deleteButton: {
-      width: 30,
-      height: 30,
+      width: 26,
+      height: 26,
       alignItems: 'center',
       justifyContent: 'center',
-      borderRadius: 10,
-    },
-    pendingRemovalWrap: {
-      marginTop: 8,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 10,
-      paddingLeft: 34,
-    },
-    pendingRemovalTrack: {
-      flex: 1,
-      height: 5,
-      borderRadius: 999,
-      overflow: 'hidden',
-      backgroundColor: theme.colors.cardBorder,
-    },
-    pendingRemovalFill: {
-      height: '100%',
-      borderRadius: 999,
-      backgroundColor: theme.colors.successStrong,
-    },
-    undoButton: {
-      height: 24,
-      paddingHorizontal: 10,
-      borderRadius: 12,
-      backgroundColor: theme.colors.overlay,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    undoText: {
-      fontSize: 12,
-      fontWeight: '700',
-      color: theme.colors.primary,
+      borderRadius: 8,
+      marginLeft: 8,
     },
     bottomComposer: {
-      marginTop: 8,
-      paddingTop: 6,
+      marginTop: 10,
+      paddingTop: 4,
       flexDirection: 'row',
       alignItems: 'center',
       gap: 10,

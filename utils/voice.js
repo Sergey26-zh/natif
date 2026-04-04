@@ -1,6 +1,6 @@
 import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
 
-const nativeVoiceModule = NativeModules.RCTVoice || NativeModules.Voice || null;
+const nativeVoiceModule = NativeModules?.RCTVoice || NativeModules?.Voice || null;
 const voiceEmitter =
   nativeVoiceModule && Platform.OS !== 'web'
     ? new NativeEventEmitter(nativeVoiceModule)
@@ -21,10 +21,12 @@ export function addVoiceListeners(handlers) {
 
   const events = [
     ['onSpeechStart', handlers.onSpeechStart],
+    ['onSpeechRecognized', handlers.onSpeechRecognized],
     ['onSpeechEnd', handlers.onSpeechEnd],
+    ['onSpeechError', handlers.onSpeechError],
     ['onSpeechResults', handlers.onSpeechResults],
     ['onSpeechPartialResults', handlers.onSpeechPartialResults],
-    ['onSpeechError', handlers.onSpeechError],
+    ['onSpeechVolumeChanged', handlers.onSpeechVolumeChanged],
   ];
 
   activeSubscriptions = events
@@ -51,7 +53,7 @@ export function isSpeechAvailable() {
 
       resolve(Boolean(available));
     });
-  });
+  }).catch(() => false);
 }
 
 export function startSpeech(locale, options = {}) {
@@ -102,5 +104,5 @@ export function stopSpeech() {
 
       resolve();
     });
-  });
+  }).catch(() => undefined);
 }

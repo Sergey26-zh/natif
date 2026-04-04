@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
@@ -21,6 +21,7 @@ const IMPORTANCE_META = {
   medium: { label: 'Средняя', color: '#6F49FF' },
   high: { label: 'Высокая', color: '#FF5A5F' },
 };
+const HIDE_DELAY_MS = 4000;
 
 function formatMonthTitle(date) {
   return date.toLocaleDateString('ru-RU', {
@@ -39,12 +40,13 @@ function formatSelectedTitle(date) {
 
 export default function CalendarScreen() {
   const tabBarHeight = useBottomTabBarHeight();
-  const { themeMode, theme, toggleTheme, previewMode, togglePreview } = useAppTheme();
+  const { themeMode, theme, toggleTheme } = useAppTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const today = useMemo(() => new Date(), []);
   const [items, setItems] = useState([]);
   const [visibleMonth, setVisibleMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
+  const pendingTimeoutsRef = useRef({});
 
   const load = async () => {
     const list = await loadPlannerItems();
@@ -53,6 +55,12 @@ export default function CalendarScreen() {
 
   useEffect(() => {
     load();
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      Object.values(pendingTimeoutsRef.current).forEach((timerId) => clearTimeout(timerId));
+    };
   }, []);
 
   useFocusEffect(
@@ -68,7 +76,7 @@ export default function CalendarScreen() {
     () =>
       items.filter((item) =>
         item.type === 'task'
-          ? item.dayKey === selectedDayKey
+          ? item.dayKey === selectedDayKey && !item.archivedCompleted
           : isSameDay(item.date, selectedDate)
       ),
     [items, selectedDate, selectedDayKey]
@@ -82,6 +90,10 @@ export default function CalendarScreen() {
       const current = map.get(key) || { reminders: 0, tasks: 0 };
 
       if (item.type === 'task') {
+        if (item.archivedCompleted) {
+          map.set(key, current);
+          return;
+        }
         current.tasks += 1;
       } else {
         current.reminders += 1;
@@ -106,7 +118,38 @@ export default function CalendarScreen() {
     }
   };
 
+  const persistItems = async (updated) => {
+    setItems(updated);
+    await savePlannerItems(updated);
+  };
+
+  const clearPendingTimeout = (id) => {
+    if (pendingTimeoutsRef.current[id]) {
+      clearTimeout(pendingTimeoutsRef.current[id]);
+      delete pendingTimeoutsRef.current[id];
+    }
+  };
+
+  const archiveTaskAfterDelay = (taskId) => {
+    clearPendingTimeout(taskId);
+
+    pendingTimeoutsRef.current[taskId] = setTimeout(() => {
+      setItems((currentItems) => {
+        const updated = currentItems.map((item) =>
+          item.id === taskId && item.type === 'task'
+            ? { ...item, archivedCompleted: true }
+            : item
+        );
+        savePlannerItems(updated);
+        return updated;
+      });
+      delete pendingTimeoutsRef.current[taskId];
+    }, HIDE_DELAY_MS);
+  };
+
   const removeItem = async (itemToDelete) => {
+    clearPendingTimeout(itemToDelete.id);
+
     if (itemToDelete.type === 'reminder' && itemToDelete.notificationId) {
       try {
         await Notifications.cancelScheduledNotificationAsync(itemToDelete.notificationId);
@@ -115,20 +158,47 @@ export default function CalendarScreen() {
       }
     }
 
-    const updated = items.filter((item) => item.id !== itemToDelete.id);
-    setItems(updated);
-    await savePlannerItems(updated);
+    const updated = items.filter((item) => {
+      if (item.id !== itemToDelete.id) {
+        return true;
+      }
+
+      if (itemToDelete.type === 'task') {
+        return false;
+      }
+
+      return false;
+    });
+    await persistItems(updated);
   };
 
   const toggleTask = async (taskId) => {
-    const updated = items.map((item) =>
-      item.id === taskId && item.type === 'task'
-        ? { ...item, completed: !item.completed }
-        : item
-    );
+    const currentTask = items.find((item) => item.id === taskId && item.type === 'task');
+    if (!currentTask) {
+      return;
+    }
 
-    setItems(updated);
-    await savePlannerItems(updated);
+    const shouldComplete = !currentTask.completed;
+    const updated = items.map((item) => {
+      if (!(item.id === taskId && item.type === 'task')) {
+        return item;
+      }
+
+      return {
+        ...item,
+        completed: shouldComplete,
+        completedAt: shouldComplete ? new Date().toISOString() : null,
+        archivedCompleted: false,
+      };
+    });
+
+    await persistItems(updated);
+
+    if (shouldComplete) {
+      archiveTaskAfterDelay(taskId);
+    } else {
+      clearPendingTimeout(taskId);
+    }
   };
 
   return (
@@ -137,27 +207,13 @@ export default function CalendarScreen() {
         <View style={styles.titleRow}>
           <Text style={styles.title}>Календарь</Text>
 
-          <View style={styles.topActions}>
-            <TouchableOpacity
-              style={[styles.previewToggle, previewMode && styles.previewToggleActive]}
-              activeOpacity={0.85}
-              onPress={togglePreview}
-            >
-              <Ionicons
-                name="phone-portrait-outline"
-                size={17}
-                color={previewMode ? '#FFFFFF' : theme.colors.primary}
-              />
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.themeToggle} activeOpacity={0.85} onPress={toggleTheme}>
-              <Ionicons
-                name={themeMode === 'dark' ? 'sunny-outline' : 'moon-outline'}
-                size={18}
-                color={theme.colors.primary}
-              />
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity style={styles.themeToggle} activeOpacity={0.85} onPress={toggleTheme}>
+            <Ionicons
+              name={themeMode === 'dark' ? 'sunny-outline' : 'moon-outline'}
+              size={18}
+              color={theme.colors.primary}
+            />
+          </TouchableOpacity>
         </View>
 
         <View style={styles.calendarCard}>
@@ -311,7 +367,7 @@ export default function CalendarScreen() {
                     activeOpacity={0.8}
                     onPress={() => removeItem(item)}
                   >
-                    <Ionicons name="trash-outline" size={18} color={theme.colors.danger} />
+                    <Ionicons name="trash-outline" size={16} color={theme.colors.textMuted} />
                   </TouchableOpacity>
                 </View>
               );
@@ -340,30 +396,11 @@ function createStyles(theme) {
       justifyContent: 'space-between',
       marginBottom: 14,
     },
-    topActions: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-    },
     title: {
       fontSize: 30,
       lineHeight: 36,
       fontWeight: '900',
       color: theme.colors.text,
-    },
-    previewToggle: {
-      width: 38,
-      height: 38,
-      borderRadius: 19,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: theme.colors.surfaceSecondary,
-      borderWidth: 1,
-      borderColor: theme.colors.cardBorder,
-    },
-    previewToggleActive: {
-      backgroundColor: theme.colors.primary,
-      borderColor: theme.colors.primary,
     },
     themeToggle: {
       width: 38,
@@ -545,10 +582,8 @@ function createStyles(theme) {
       color: theme.colors.textSoft,
     },
     deleteButton: {
-      width: 38,
-      height: 38,
-      borderRadius: 12,
-      backgroundColor: theme.colors.dangerSoft,
+      width: 26,
+      height: 26,
       alignItems: 'center',
       justifyContent: 'center',
       marginLeft: 10,
