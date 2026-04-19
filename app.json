@@ -1,9 +1,21 @@
 {
   "expo": {
+    "name": "Napo",
+    "slug": "napo",
     "newArchEnabled": true,
+    "icon": "./assets/icon.png",
     "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#6A44FF",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "blockedPermissions": [
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
+      ],
       "permissions": [
-        "android.permission.RECORD_AUDIO",
         "android.permission.RECORD_AUDIO",
         "android.permission.SCHEDULE_EXACT_ALARM"
       ],
@@ -14,6 +26,14 @@
         "NSMicrophoneUsageDescription": "Приложению нужен доступ к микрофону для голосового ввода напоминаний.",
         "NSSpeechRecognitionUsageDescription": "Приложению нужно распознавание речи для создания напоминаний голосом."
       }
+    },
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#6A44FF"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
     }
   }
 }

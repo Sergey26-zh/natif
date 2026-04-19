@@ -405,7 +405,7 @@ export default function HomeScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 24 : 12}
       >
-        <View style={[styles.container, { paddingBottom: Math.max(8, tabBarHeight - 46) }]}>
+        <View style={[styles.container, { paddingBottom: tabBarHeight - 40 }]}>
           <View style={styles.headerRow}>
             <View style={styles.titleWrap}>
               <Text style={styles.title}>
@@ -481,7 +481,7 @@ export default function HomeScreen() {
                 onDragEnd={useDragList ? ({ data }) => reorderTasks(data) : undefined}
                 showsVerticalScrollIndicator={false}
                 keyboardShouldPersistTaps="handled"
-                contentContainerStyle={[styles.taskList, { paddingBottom: 110 }]}
+                contentContainerStyle={[styles.taskList, { paddingBottom: tabBarHeight + 84 }]}
                 activationDistance={useDragList ? 12 : undefined}
                 extraData={{ items, viewMode }}
                 renderItem={renderActiveTask}
@@ -493,7 +493,7 @@ export default function HomeScreen() {
                 style={styles.listViewport}
                 showsVerticalScrollIndicator={false}
                 keyboardShouldPersistTaps="handled"
-                contentContainerStyle={[styles.taskList, { paddingBottom: 18 }]}
+                contentContainerStyle={[styles.taskList, { paddingBottom: tabBarHeight + 12 }]}
                 extraData={{ items, viewMode }}
                 renderItem={renderHistoryTask}
               />
@@ -771,6 +771,7 @@ function createStyles(theme) {
     bottomComposer: {
       marginTop: 10,
       paddingTop: 4,
+      paddingBottom: 4,
       flexDirection: 'row',
       alignItems: 'center',
       gap: 10,

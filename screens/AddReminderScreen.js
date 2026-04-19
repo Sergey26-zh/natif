@@ -558,7 +558,7 @@ export default function AddReminderScreen() {
       >
         <ScrollView
           style={styles.flex}
-          contentContainerStyle={[styles.content, { paddingBottom: 18 }]}
+          contentContainerStyle={[styles.content, { paddingBottom: tabBarHeight + 18 }]}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
           automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
@@ -770,7 +770,7 @@ export default function AddReminderScreen() {
           <TouchableOpacity
             onPress={mode === 'quick' ? addQuick : addExact}
             activeOpacity={0.88}
-            style={[styles.buttonWrap, { marginBottom: Math.max(8, tabBarHeight - 46) }]}
+            style={styles.buttonWrap}
           >
             <LinearGradient
               colors={[theme.colors.primaryStrong, theme.colors.primaryAlt]}

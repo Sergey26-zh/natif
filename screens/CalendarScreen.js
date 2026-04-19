@@ -203,7 +203,7 @@ export default function CalendarScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <View style={styles.container}>
+      <View style={[styles.container, { paddingBottom: tabBarHeight + 12 }]}>
         <View style={styles.titleRow}>
           <Text style={styles.title}>Календарь</Text>
 
@@ -296,7 +296,7 @@ export default function CalendarScreen() {
         </Text>
 
         {selectedItems.length === 0 ? (
-          <View style={styles.emptyCard}>
+          <View style={[styles.emptyCard, styles.emptyCardSpaced]}>
             <Ionicons name="sunny-outline" size={20} color={theme.colors.emptyIcon} />
             <Text style={styles.emptyText}>Ничего не запланировано</Text>
           </View>
@@ -305,7 +305,7 @@ export default function CalendarScreen() {
             data={selectedItems}
             keyExtractor={(item) => item.id}
             showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ paddingBottom: tabBarHeight + 22 }}
+            contentContainerStyle={{ paddingBottom: 12 }}
             renderItem={({ item }) => {
               const reminderMeta = IMPORTANCE_META[item.importance] || IMPORTANCE_META.medium;
               const isTask = item.type === 'task';
@@ -529,6 +529,9 @@ function createStyles(theme) {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 10,
+    },
+    emptyCardSpaced: {
+      marginBottom: 12,
     },
     emptyText: {
       color: theme.colors.textMuted,
